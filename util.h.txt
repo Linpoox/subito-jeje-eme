@@ -1,0 +1,87 @@
+/*
+ * util.h
+ *
+ * Maniet Arthur
+ * Renard Jérome
+ * Contient les fonctions, macros, constantes et includes partagés par toute l'application
+ */
+
+#ifndef _UTIL_H_
+#define _UTIL_H_
+
+/* includes */
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <errno.h>
+#include <strings.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <signal.h>
+#include <netdb.h>
+#include <netinet/in.h>
+#include <sys/time.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <sys/sem.h>
+#include <sys/shm.h>
+
+/* defines */
+#define FALSE 0
+#define TRUE 1
+
+#define TAILLE_MESSAGES 256
+#define TAILLE_PSEUDO 16
+
+#define GAMESTATE_ATTENTE_JOUEURS 0
+#define GAMESTATE_EN_COURS 1
+#define DELAI_INSCRIPTIONS 10
+#define NB_TUILES 40
+#define NB_CASES 5
+#define MIN_JOUEURS 2
+#define MAX_JOUEURS 10
+
+#define KEY 2576343
+#define KEY_RC 2496387
+
+#define SEM_READ 0
+#define SEM_WRITE 1
+
+/* vars d'utilité publique */
+int i;
+int n;
+char buffer[256];
+int indice_buffer;
+
+/* structs */
+typedef struct joueur_t {
+	char pseudo[TAILLE_PSEUDO];
+	int score;
+	int tour_fini;
+} joueur_t;
+
+typedef struct game_data_t {
+	joueur_t joueurs[MAX_JOUEURS];
+	int nb_joueurs;
+	int tour;
+} game_data_t;
+
+typedef struct client_t {
+	int fd;
+	char pseudo[TAILLE_PSEUDO];
+	joueur_t* joueur_pt;
+} client_t;
+
+typedef struct clients_data_t {
+	struct client_t clients[MAX_JOUEURS];
+	int nb_clients;
+} clients_data_t;
+
+/* fonctions */
+void error(const char *msg);
+void read_message(int fd, char* buffer, char** type_message, char** contenu_message);
+void shuffle(int*, int);
+int is_null(void * bloc, int size);
+
+
+#endif

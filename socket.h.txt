@@ -1,0 +1,19 @@
+/*
+ * shm.h
+ *
+ * Maniet Arthur
+ * Renard Jérome
+ */
+
+#ifndef _SOCKET_H_
+#define _SOCKET_H_
+
+
+#include "util.h"
+
+int server_socket_init(int);
+int accept_client(int);
+int connexion_serveur(int);
+
+
+#endif

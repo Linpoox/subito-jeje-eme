@@ -1,0 +1,30 @@
+CC=cc
+CFLAGS=-ansi -pedantic
+
+all: client server
+
+
+client: client.o util.o shm.o socket.o semaphore.o
+	$(CC) -o client client.o util.o shm.o socket.o semaphore.o
+
+server: server.o util.o shm.o socket.o semaphore.o partie.o
+	$(CC) -o server server.o util.o shm.o socket.o semaphore.o partie.o
+
+
+client.o: client.c client.h
+	$(CC) $(CFLAGS) -c client.c
+
+server.o: server.c server.h
+	$(CC) $(CFLAGS) -c server.c
+
+partie.o: partie.c partie.h
+	$(CC) $(CFLAGS) -c partie.c
+
+util.o: util.c util.h
+	$(CC) $(CFLAGS) -c util.c
+
+shm.o: shm.c shm.h
+	$(CC) $(CFLAGS) -c shm.c
+
+socket.o: socket.c socket.h
+	$(CC) $(CFLAGS) -c socket.c

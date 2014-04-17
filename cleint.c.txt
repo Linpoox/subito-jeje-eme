@@ -1,0 +1,196 @@
+/*
+ * client.c
+ *
+ * Maniet Arthur
+ * Renard Jérome
+ */
+
+#include "client.h"
+
+static int socket_server;
+static game_data_t* shared_game_data;
+static int grille[NB_CASES];
+
+int main(int argc, char *argv[]) {
+	int port;
+	
+	char message[TAILLE_MESSAGES];
+	char* type_message;
+	char* contenu_message;
+	
+	/* Usage */
+	if (argc != 2) {
+		fprintf(stderr, "Usage :%s port\n", argv[0]);
+		return 1;
+	}
+	
+	/* Port du socket */
+	if ((port = atoi(argv[1])) < 1025 || port > 65535) {
+		fprintf(stderr, "Numéro de port incorrect (doit être compris entre 1025 et 65535)\n");
+		return 1;
+	}
+	
+	/* Connexion au serveur, signaux, semaphore, shared memory */
+	socket_server = connexion_serveur(port);
+	signal(SIGINT, quitter);
+	sem_init(KEY);
+	shared_game_data = attach_to_shm(KEY, FALSE);
+	
+	/* Envoi du "HI pseudo" au serveur */
+	printf("Entrez le pseudo que vous désirez employer pour la partie : ");
+	bzero(buffer, 256);
+	indice_buffer = sprintf(buffer, "HI ");
+	fgets(buffer+indice_buffer, 255-indice_buffer, stdin);
+	strtok(buffer, "\n"); /* transforme le \n en \0 */
+	n = (int) write(socket_server, buffer, strlen(buffer));
+	if (n < 0)
+		 error("Erreur d'écriture dans le socket");
+	bzero(buffer, 256);
+		
+	while (1) {
+		
+		/* Réception d'un message du serveur */
+		read_message(socket_server, message, &type_message, &contenu_message);
+		
+		if (strcmp(type_message, "ACK") == 0) {
+			printf("Vous êtes accepté pour la prochaine partie.\n\tIl y a actuellement %s joueurs.\n", contenu_message);
+			for (i=0; i<NB_CASES; i++) grille[i] = -1;
+			
+		} else if (strcmp(type_message, "NACK") == 0) {
+			printf("Impossible de se joindre �  une partie en préparation.\n\tRaison : %s\n", contenu_message);
+			
+		} else if (strcmp(type_message, "BYE") == 0) {
+			printf("Le serveur a été interrompu, on ne peut que faire de même.\n");
+			exit(0);
+			
+		} else if (strcmp(type_message, "MESSAGE") == 0) {
+			printf("Message du serveur : %s\n", contenu_message);
+		
+		} else if (strcmp(type_message, "KICK") == 0) {
+			printf("Vous venez de vous faire expulser\n");
+			exit(0);
+			
+		} else if (strcmp(type_message, "TUILE") == 0) {
+			printf("Tour %d : la tuile tirée est %s\n", shared_game_data->tour, contenu_message);
+			if (strcmp(contenu_message, "0") == 0) { /* La tuile 0 est le joker */
+				printf("\t(Le JOKER)\n");
+			}
+			afficher_grille();
+			while (!placer_tuile(atoi(contenu_message)));
+			n = (int) write(socket_server, "TOUR_FINI", 9);
+			if (n < 0)
+				error("Erreur d'écriture dans le socket");
+			printf("La tuile est placée, on attend que tous les joueurs aient fait de même.\n");
+		
+		} else if (strcmp(type_message, "CALCULER_SCORES") == 0) {
+			printf("La partie est finie\n");
+			afficher_grille();
+			indice_buffer = sprintf(buffer, "SCORE %d", calculer_score());
+			n = (int) write(socket_server, buffer, indice_buffer);
+			if (n < 0)
+				error("Erreur d'écriture dans le socket");
+		
+		} else if (strcmp(type_message, "SCORES_OK") == 0) {
+			int score_max, score_i;
+			score_max = 0;
+			printf("Résultats :\n");
+			for (i=0; i<MAX_JOUEURS; i++)
+				if (! is_null(&shared_game_data->joueurs[i], sizeof(joueur_t))) {
+					score_i = shared_game_data->joueurs[i].score;
+					printf("\t%s : %d\n", shared_game_data->joueurs[i].pseudo, score_i);
+					if (score_i > score_max) score_max = score_i;
+				}
+			printf("\nGagnant(s) :\n");
+			for (i=0; i<MAX_JOUEURS; i++)
+				if (! is_null(&shared_game_data->joueurs[i], sizeof(joueur_t)) && shared_game_data->joueurs[i].score == score_max) {
+					printf("\t%s : %d\n", shared_game_data->joueurs[i].pseudo, score_max);
+				}
+			exit(0);
+					
+		}
+	}
+	
+	/* Fin du programme */
+	close(socket_server);
+	return 0;
+}
+
+/* Affiche la grille de jeu */
+void afficher_grille() {
+	printf(" _____________________________ \n");
+	printf("| Etat actuel de votre grille |\n");
+	printf(" ¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯ \n");
+	printf("            ");
+	for (i=0; i<NB_CASES*5-1; i++)
+		printf("_");
+	printf("\nposition : |");
+	for (i=0; i<NB_CASES; i++)
+		printf("%3d |", i+1);
+	printf("\n           |");
+	for (i=0; i<NB_CASES*5-1; i++)
+		printf("–");
+	printf("|\ntuile    : |");
+	for (i=0; i<NB_CASES; i++) {
+		if (grille[i] == -1) printf("    |");
+		else printf("%3d |", grille[i]);
+	}
+	printf("\n            ");
+	for (i=0; i<NB_CASES*5-1; i++)
+		printf("¯");
+	printf("\n\n");
+}
+
+/* Gère l'écriture d'une tuile dans la grille */
+int placer_tuile(int tuile) {
+	static int position;
+	static char* endptr;
+	
+	printf("Entrez le numéro de la case où placer la tuile :\n");
+	fgets(buffer, 256, stdin);
+	errno = 0;
+	position = (int) strtol(buffer, &endptr, 10) - 1;
+	if (errno != 0 || *buffer == *endptr || *endptr != '\n' || position < 0 || position > NB_CASES-1) {
+		printf("Non mais ça va pas ça, on réessaie.\n");
+		return FALSE;
+	}
+	if (grille[position] != -1) {
+		printf("Cet emplacement est déj�  occuppé.\n");
+		return FALSE;
+	}
+	grille[position] = tuile;
+	
+	return TRUE;
+}
+
+/* Renvoie la valeur en points d'une suite */
+int get_valeur_suite(int taille_suite) {
+	static int points[20] = {0, 1, 3, 5, 7, 9, 11, 15, 20, 25, 30, 35, 40, 50, 60, 70, 85, 100, 150, 300};
+	return points[taille_suite-1];
+}
+
+/* Calcule le score */
+int calculer_score() {
+	int score, taille_suite;
+	score = 0;
+	taille_suite = 1;
+	for (i=1; i<NB_CASES; i++) {
+		if (grille[i-1] <= grille[i] || grille[i] == 0) {
+			taille_suite++;
+		} else {
+			score += get_valeur_suite(taille_suite);
+			taille_suite = 1;
+		}
+	}
+	score += get_valeur_suite(taille_suite);
+	return score;
+}
+
+/* Gère la déconnexion */
+void quitter(int param) {
+	sem_destroy();
+	detach_from_shm(shared_game_data);
+	destroy_shm();
+	write(socket_server, "BYE ", 3);
+	printf("\nÀ la prochaine\n");
+	exit(0);
+}

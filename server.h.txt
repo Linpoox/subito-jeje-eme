@@ -1,0 +1,28 @@
+/*
+ * server.h
+ *
+ * Maniet Arthur
+ * Renard Jérome
+ */
+
+#ifndef _SERVER_H_
+#define _SERVER_H_
+
+
+#include "partie.h"
+#include "util.h"
+#include "socket.h"
+#include "shm.h"
+#include "semaphore.h"
+
+clients_data_t clients_data; /* Variable globale pour partie.c */
+
+void quitter();
+void broadcast_message(char*, int);
+int get_indice_client(int);
+int get_indice_client_by_pseudo(char*);
+void ajouter_client(int, char*);
+void supprimer_joueur(int);
+
+
+#endif
