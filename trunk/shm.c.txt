@@ -1,0 +1,71 @@
+/*
+ * shm.c
+ *
+ * Maniet Arthur
+ * Renard Jérome
+ *
+ * Gestion de la mémoire partagée
+ */
+
+#include "shm.h"
+
+int shmid;
+int nb_lecteurs;
+
+/* Shared memory pour les données de jeu */
+
+void create_shm(key_t key) {
+	if ((shmid = shmget(key, sizeof(game_data_t), IPC_CREAT | 0644)) < 0)
+		error("Erreur �  la création de la mémoire partagée");
+}
+
+game_data_t* attach_to_shm(key_t key, int is_writer) {
+	/* shmat retourne un pointeur ou -1 ; comme un pointeur est un long (je crois) on ne le cast comme tel qu'au return  */
+	static long addresse_shm;
+	
+	if ((shmid = shmget(key, sizeof(game_data_t), 0)) < 0)
+		error("Erreur �  l'obtention de la mémoire partagée, elle n'a probablement pas été créée");
+	
+	if ((addresse_shm = (long) shmat(shmid, 0, (is_writer ? 0 : SHM_RDONLY))) < 0)
+		error("Erreur lors de l'attachement �  la mémoire partagée");
+	
+	return (game_data_t *) addresse_shm;
+}
+
+void detach_from_shm(void* addresse_shm) {
+	if (shmdt(addresse_shm) < 0)
+		error("Erreur au détachement de la mémoire partagée");
+}
+
+void destroy_shm() {
+	if (shmctl(shmid, IPC_RMID, NULL) < 0)
+		error("Erreur �  la suppression de la mémoire partagée");
+}
+
+/* Shared memory qui partage le nombre de lecteurs pour l'algorithme de Courtois */
+
+void create_shm_nb_lecteurs(key_t key) {
+	if ((nb_lecteurs = shmget(key, sizeof(int), IPC_CREAT | 0666)) < 0)
+		error("Erreur �  la création de la mémoire partagée pour le nombre de lecteurs");
+}
+
+int* attach_to_shm_nb_lecteurs(key_t key) {
+	static long addresse_shm;
+	
+	if ((nb_lecteurs = shmget(key, sizeof(int), 0)) < 0)
+		error("Erreur �  l'obtention de la mémoire partagée pour le nombre de lecteurs, elle n'a probablement pas été créée");
+	
+	if ((addresse_shm = (long) shmat(nb_lecteurs, 0, 0)) < 0)
+		error("Erreur lors de l'attachement �  la mémoire partagée");
+	
+	return (int *) addresse_shm;
+}
+
+/* Le dernier processus vivant - pas forcément le serveur - doit nettoyer cet ipc */
+/* -> �  chaque shmdt() on tente de supprimer l'ipc */
+void detach_from_shm_nb_lecteurs(void * shm) { /* TODO : test */
+	if (shmctl(nb_lecteurs, IPC_RMID, NULL) < 0)
+		error("Erreur �  la suppression de la mémoire partagée");
+	if (shmdt(shm) < 0)
+		error("Erreur au détachement de la mémoire partagée");
+}

@@ -1,0 +1,277 @@
+/*
+ * server.c
+ *
+ * Maniet Arthur
+ * Renard Jérome
+ *
+ * TODO
+ * types messages -> constantes
+ * timer pour TOUR_FINI (expulser les clients qui s'endorment)
+ * Deux programmes serveurs ne peuvent pas être exécutés simultanément, ce test doit être prévu lors du lancement du programme.
+ */
+
+#include "server.h"
+
+int main(int argc, char *argv[]) {
+	int n;
+	int port;
+	int server_fd;
+	fd_set listened_fds;
+	
+	char message[TAILLE_MESSAGES];
+	char* type_message;
+	char* contenu_message;
+	
+	/* Help */
+	if (strcmp(argv[1], "--help") == 0) {
+		printf("Serveur pour le jeu \"Streams\"\n\n\
+			   Usage :\n\
+			   %s port [fichier_erreur]\n\
+			   %s --help\n\n\
+			   Commandes :\n\
+			   joueurs\t\tAffiche le nom des joueurs.\n\
+			   kick pseudo_joueur\tRetire le joueur de la partie.\n\
+			   broadcast message\tEnvoie un message �  tous les joueurs\n", argv[0], argv[0]);
+		return 0;
+	}
+	
+	/* Usage */
+	if (argc != 3 && argc != 2) {
+		fprintf(stderr, "Usage :\n\t%s port [fichier_erreur]\n\t%s --help\n", argv[0], argv[0]);
+		return 1;
+	}
+	
+	/* Port du socket */
+	if ((port = atoi(argv[1])) < 1025 || port > 65535) {
+		fprintf(stderr, "Numéro de port incorrect (doit être compris entre 1025 et 65535)\n");
+		return 1;
+	}
+	
+	/* Redirection des erreurs */
+	if (argc == 3) {
+		int erreur_fd = open(argv[2], O_WRONLY|O_CREAT|O_TRUNC, 0755);
+		if (erreur_fd < 0)
+			error("Erreur �  l'ouverture/création du fichier d'erreur, vérifiez les permissions du dossier");
+		#ifdef DUP2
+		dup2(erreur_fd, 2);
+		#else
+		close(2);
+		dup(erreur_fd);
+		#endif
+	}
+	
+	/* Initialisation de l'état du serveur */
+	server_fd = server_socket_init(port);
+	listen(server_fd,5);
+	FD_ZERO(&listened_fds);
+	signal(SIGINT, quitter);
+	initialiser_partie();
+	
+	while (1) {
+		
+		FD_ZERO(&listened_fds);
+		FD_SET(server_fd, &listened_fds);
+		FD_SET(0, &listened_fds);
+		for(i=0; i<MAX_JOUEURS; i++)
+			if (! is_null(&clients_data.clients[i], sizeof(client_t)))
+				FD_SET(clients_data.clients[i].fd, &listened_fds);
+		
+		errno = 0;
+		/* TODO : lors d'une nouvelle partie, les FD choisis continuent �  être plus évelés */
+		/* avec nfds = server_fd+MAX_JOUEURS+1 on risque de tomber trop court (typiquement si MAX_JOUEURS = 3) */
+		n = select((server_fd+MAX_JOUEURS+1), &listened_fds, NULL, NULL, NULL);
+		if (n == -1) {
+			if (errno == EINTR) /* errno == EINTR si select est interrompu (par alarm en l'occurrence) */
+				continue;
+			else
+				error("Erreur dans l'usage de l'appel système select");
+		}
+		
+		/* Connexion d'un nouveau client et réception du HI (du moins on espère sinon l'application se bloque) */
+		if (FD_ISSET(server_fd, &listened_fds)) {
+			
+			int new_client_fd = accept_client(server_fd);
+			read_message(new_client_fd, message, &type_message, &contenu_message);
+			
+			if (strcmp(type_message, "HI") == 0) {
+				
+				if (gamestate == GAMESTATE_ATTENTE_JOUEURS) {
+					/* Ajouter le joueur dans la mémoire locale et la liste des FD écoutés */
+					ajouter_client(new_client_fd, contenu_message);
+					FD_SET(new_client_fd, &listened_fds);
+					
+					/* Notifications */
+					printf("Nouveau joueur: %s\n", clients_data.clients[get_indice_client(new_client_fd)].pseudo); /* pour le serveur */
+					indice_buffer = sprintf(buffer, "ACK %d", clients_data.nb_clients);
+					n = (int) write(new_client_fd, buffer, indice_buffer); /* pour le nouvel inscrit */
+					if (n < 0)
+						error("Erreur d'écriture dans le socket");
+					
+					/* game_data le timer ou la partie */
+					if (clients_data.nb_clients == MIN_JOUEURS) {
+						printf("Nombre minimum de joueurs atteint. La partie commencera dans %d secondes.\n", DELAI_INSCRIPTIONS);
+						signal(SIGALRM, lancer_partie);
+						alarm(DELAI_INSCRIPTIONS);
+					} else if (clients_data.nb_clients == MAX_JOUEURS) {
+						alarm(0); /* annule le timer */
+						printf("Nombre maximum de joueurs atteint.\n");
+						lancer_partie(&clients_data);
+					}
+				}
+				
+				else if (gamestate == GAMESTATE_EN_COURS) {
+					printf("Nouveau joueur refusé: %s\n", contenu_message);
+					indice_buffer = sprintf(buffer, "NACK la partie est en cours.");
+					n = (int) write(new_client_fd, buffer, indice_buffer);
+					if (n < 0)
+						error("Erreur d'écriture dans le socket");
+				}
+			}
+		}
+		
+		/* Il y a quelque-chose �  lire sur stdin */
+		else if (FD_ISSET(0, &listened_fds)) {
+			read_message(0, message, &type_message, &contenu_message);
+			
+			if (strcmp(type_message, "joueurs") == 0) {
+				printf("Joueurs :\n");
+				for(i=0; i<MAX_JOUEURS; i++)
+					if (! is_null(&clients_data.clients[i], sizeof(client_t)))
+						printf("\t%s\n", clients_data.clients[i].pseudo);
+				
+			} else if (strcmp(type_message, "kick") == 0) {
+				int fd_joueur = clients_data.clients[get_indice_client_by_pseudo(contenu_message)].fd;
+				indice_buffer = sprintf(buffer, "KICK");
+				n = (int) write(fd_joueur, buffer, indice_buffer);
+				if (n < 0)
+					error("Erreur d'écriture dans le socket");
+				supprimer_joueur(fd_joueur);
+				FD_CLR(fd_joueur, &listened_fds);
+				printf("Le joueur %s a bien été expulsé.\n", contenu_message);
+				
+			} else if (strcmp(type_message, "broadcast") == 0) {
+				indice_buffer = sprintf(buffer, "MESSAGE ");
+				strcpy(buffer+indice_buffer, contenu_message);
+				broadcast_message(buffer, (int) strlen(buffer));
+				printf("Message envoyé �  tous les joueurs : %s.\n", contenu_message);
+			
+			} else if (strcmp(type_message, "exit") == 0) {
+				quitter();
+			}
+		}
+		
+		/* Message reçu depuis le fd d'un client */
+		else {
+			int fd_actif;
+			for (fd_actif = 0; !FD_ISSET(fd_actif, &listened_fds); fd_actif++); /* Trouve le fd_actif */
+			read_message(fd_actif, message, &type_message, &contenu_message);
+			
+			if (strcmp(type_message, "BYE") == 0) {
+				printf("Le joueur %s s'est déconnecté.\n", clients_data.clients[get_indice_client(fd_actif)].pseudo);
+				supprimer_joueur(fd_actif);
+				FD_CLR(fd_actif, &listened_fds);
+			
+			} else if (strcmp(type_message, "TOUR_FINI") == 0 && gamestate == GAMESTATE_EN_COURS) {
+				int tout_le_monde_a_fini;
+				tout_le_monde_a_fini = TRUE;
+				clients_data.clients[get_indice_client(fd_actif)].joueur_pt->tour_fini = TRUE;
+				for (i=0; i<MAX_JOUEURS; i++)
+					if (! is_null(&clients_data.clients[i], sizeof(client_t)) && clients_data.clients[i].joueur_pt->tour_fini == FALSE)
+						tout_le_monde_a_fini = FALSE;
+				if (tout_le_monde_a_fini) {
+					if (shared_game_data->tour == NB_CASES) finir_partie();
+					else debuter_tour();
+				}
+			}
+			
+			else if (strcmp(type_message, "SCORE") == 0) {
+				int tout_le_monde_a_fini;
+				tout_le_monde_a_fini = TRUE;
+				clients_data.clients[get_indice_client(fd_actif)].joueur_pt->score = atoi(contenu_message);
+				for (i=0; i<MAX_JOUEURS; i++)
+					if (! is_null(&clients_data.clients[i], sizeof(client_t)) && clients_data.clients[i].joueur_pt->score == -1)
+						tout_le_monde_a_fini = FALSE;
+				if (tout_le_monde_a_fini) {
+					broadcast_message("SCORES_OK", 9);
+					sleep(3);
+					bzero(&clients_data, sizeof(clients_data_t));
+					bzero(shared_game_data, sizeof(game_data_t));
+				}
+			}
+		}
+	}
+}
+
+/* Trouve l'indice d'un client dans game_data_local.clients sur base de son FD */
+int get_indice_client(int fd) {
+	for (i=0; i<MAX_JOUEURS; i++)
+		if (! is_null(&clients_data.clients[i], sizeof(client_t)) && clients_data.clients[i].fd == fd)
+			return i;
+	return -1; /* segmentation fault bait ? */
+}
+
+/* Trouve l'indice d'un client dans game_data_local.clients sur base de son FD */
+int get_indice_client_by_pseudo(char* pseudo) {
+	for (i=0; i<MAX_JOUEURS; i++)
+		if (! is_null(&clients_data.clients[i], sizeof(client_t)) && strcmp(clients_data.clients[i].pseudo, pseudo) == 0)
+			return i;
+	return -1;
+}
+
+/* Ajoute un joueur dans une structure shm_data */
+void ajouter_client(int fd, char pseudo[16]) {
+	static int indice;
+	
+	for(indice=0; indice<MAX_JOUEURS && !is_null(&clients_data.clients[indice], sizeof(client_t)); indice++);
+	if (indice >= MAX_JOUEURS)
+		error("Erreur de programmation : appel de ajouter_joueur alors que le MAX_JOUEURS est atteint.");
+	clients_data.clients[indice].fd = fd;
+	memcpy(clients_data.clients[indice].pseudo, pseudo, TAILLE_PSEUDO-1);
+	clients_data.clients[indice].pseudo[TAILLE_PSEUDO-1] = '\0'; /* sécurité inutile tant qu'un byte �  0 == '\0' */
+	clients_data.nb_clients++;
+}
+
+/* Supprime un joueur sur base de son file descriptor */
+void supprimer_joueur(int fd) {
+	static int indice;
+	
+	indice = get_indice_client(fd);
+	if (indice < 0 || indice >= MAX_JOUEURS)
+		error("Erreur de programmation : tentative de supprimer un joueur qui n'existe pas / out of bounds dans supprimer_joueur.");
+	bzero(&(clients_data.clients[indice]), sizeof(client_t));
+	clients_data.nb_clients--;
+	
+	if (clients_data.nb_clients == MIN_JOUEURS-1) {
+		if (gamestate == GAMESTATE_ATTENTE_JOUEURS) {
+			alarm(0);
+		} else if (gamestate == GAMESTATE_EN_COURS) {
+			indice_buffer = sprintf(buffer, "MESSAGE Il ne reste plus que vous dans la partie … vous avez donc gagné !");
+			sleep(1);
+			broadcast_message(buffer, indice_buffer);
+			sleep(1);
+			finir_partie();
+		}
+	}
+	close(fd);
+}
+
+/* Envoie un message �  tous les joueurs de tab */
+void broadcast_message(char* message, int message_size) {
+	for (i=0; i<MAX_JOUEURS; i++)
+		if (! is_null(&clients_data.clients[i], sizeof(client_t))) {
+			n = (int) write(clients_data.clients[i].fd, message, message_size);
+			if (n < 0)
+				error("Erreur d'écriture dans le socket");
+		}
+}
+
+/* Gère la déconnexion */
+void quitter() {
+	sem_destroy();
+	detach_from_shm(shared_game_data);
+	destroy_shm();
+	broadcast_message("BYE", 3);
+	destroy_shm();
+	printf("\nÀ la prochaine\n");
+	exit(0);
+}

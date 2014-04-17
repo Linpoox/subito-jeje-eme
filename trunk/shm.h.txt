@@ -1,0 +1,24 @@
+/*
+ * shm.h
+ *
+ * Maniet Arthur
+ * Renard Jérome
+ */
+
+#ifndef _SHM_H_
+#define _SHM_H_
+
+
+#include "util.h"
+
+void create_shm(key_t);
+game_data_t* attach_to_shm(key_t, int);
+void detach_from_shm(void*);
+void destroy_shm();
+
+void create_shm_nb_lecteurs(key_t);
+int* attach_to_shm_nb_lecteurs(key_t);
+void detach_from_shm_nb_lecteurs(void*);
+
+
+#endif

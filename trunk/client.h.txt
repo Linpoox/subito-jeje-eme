@@ -1,0 +1,25 @@
+/*
+ * client.h
+ *
+ * Maniet Arthur
+ * Renard Jérome
+ */
+
+#ifndef _CLIENT_H_
+#define _CLIENT_H_
+
+
+#include "util.h"
+#include "socket.h"
+#include "shm.h"
+#include "semaphore.h"
+
+int connexion_serveur(int);
+void afficher_grille();
+int placer_tuile(int);
+int get_valeur_suite(int);
+int calculer_score();
+void quitter(int);
+
+
+#endif
